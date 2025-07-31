@@ -14,7 +14,7 @@ const ClassesPage = () => {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold mb-4">My Classes</h1>
+      <h1 className="text-2xl font-bold mt-10 mb-4">My Classes</h1>
       {loading && <div>Loading...</div>}
       {error && <div className="text-red-500">{error}</div>}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

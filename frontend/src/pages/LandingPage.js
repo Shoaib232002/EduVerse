@@ -25,10 +25,10 @@ const LandingPage = () => {
   ];
 
   const stats = [
-    { number: "50K+", label: "Active Students" },
-    { number: "5K+", label: "Educators" },
-    { number: "99.9%", label: "Uptime" },
-    { number: "4.9★", label: "User Rating" }
+    { number: "", label: "Active Students" },
+    { number: "", label: "Educators" },
+    { number: "", label: "Uptime" },
+    { number: "★", label: "User Rating" }
   ];
 
   return (
@@ -50,7 +50,7 @@ const LandingPage = () => {
               <div className="space-y-6">
                 <div className="inline-flex items-center space-x-2 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-4 py-2 rounded-full text-sm font-medium">
                   <Star className="w-4 h-4" />
-                  <span>Trusted by 50,000+ educators worldwide</span>
+                  <span>Trusted by educators </span>
                 </div>
                 
                 <h2 className="text-5xl lg:text-7xl font-black leading-tight">

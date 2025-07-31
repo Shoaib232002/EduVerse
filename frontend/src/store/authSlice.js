@@ -5,10 +5,12 @@ export const login = createAsyncThunk(
   'auth/login',
   async (credentials, { rejectWithValue }) => {
     try {
-      const response = await api.post('/api/auth/login', credentials);
+      const response = await api.post('/auth/login', credentials);
       if (response.data.success) {
         const { token, user } = response.data;
+        // Store token with timestamp
         localStorage.setItem('token', token);
+        localStorage.setItem('tokenTimestamp', Date.now().toString());
         return { token, user };
       }
       return rejectWithValue(response.data.message);
