@@ -72,16 +72,39 @@ exports.getClasses = async (req, res) => {
         { teacher: req.user._id },
         { students: req.user._id }
       ]
+    })
+    .populate('teacher', 'name email')
+    .populate('students', 'name email')
+    .populate('meeting')
+    .lean()
+    .exec();
+
+    if (!classes) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No classes found' 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      data: classes.map(cls => ({
+        ...cls,
+        isTeacher: cls.teacher._id.toString() === req.user._id.toString()
+      }))
     });
-    res.json({ success: true, data: classes });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    console.error('Error fetching classes:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to fetch classes'
+    });
   }
 };
 
 exports.getClassById = async (req, res) => {
   try {
-    const classData = await Class.findById(req.params.id);
+    const classData = await Class.findById(req.params.id).populate('teacher', 'name email');
     if (!classData) {
       return res.status(404).json({ success: false, message: 'Class not found' });
     }
@@ -139,16 +162,54 @@ exports.joinClassByCode = async (req, res) => {
   try {
     const { joinCode } = req.params;
     const userId = req.user._id;
-    const foundClass = await Class.findOne({ joinCode });
+
+    // Find class and populate teacher info
+    const foundClass = await Class.findOne({ joinCode })
+      .populate('teacher', 'name email')
+      .populate('students', 'name email');
+
     if (!foundClass) {
-      return res.status(404).json({ success: false, message: 'Class not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Invalid class code. Please check and try again.' 
+      });
     }
-    if (!foundClass.students.includes(userId)) {
-      foundClass.students.push(userId);
-      await foundClass.save();
+
+    // Check if user is already a student in this class
+    if (foundClass.students.some(student => student._id.toString() === userId.toString())) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'You are already enrolled in this class' 
+      });
     }
-    res.json({ success: true, class: foundClass });
+
+    // Check if user is the teacher of this class
+    if (foundClass.teacher._id.toString() === userId.toString()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'You cannot join your own class as a student' 
+      });
+    }
+
+    // Add student to class
+    foundClass.students.push(userId);
+    await foundClass.save();
+
+    // Re-populate after saving
+    const updatedClass = await Class.findById(foundClass._id)
+      .populate('teacher', 'name email')
+      .populate('students', 'name email');
+
+    res.json({ 
+      success: true, 
+      message: 'Successfully joined the class',
+      class: updatedClass
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to join class' });
+    console.error('Join class error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || 'Failed to join class. Please try again.' 
+    });
   }
 };
