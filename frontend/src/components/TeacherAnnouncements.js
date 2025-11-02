@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { FaTrash, FaBullhorn } from 'react-icons/fa';
-import ClassComponentWrapper from './ClassComponentWrapper';
 import { useSelector } from 'react-redux';
 import api from '../services/api';
+import { io } from 'socket.io-client';
 
 const TeacherAnnouncements = ({ classId }) => {
   const [announcements, setAnnouncements] = useState([]);
@@ -11,6 +11,23 @@ const TeacherAnnouncements = ({ classId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const { user } = useSelector(state => state.auth);
+
+  // Socket.io connection
+  const [socket, setSocket] = useState(null);
+
+  useEffect(() => {
+    // Initialize socket connection
+    const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+    const socketConnection = io(SOCKET_URL);
+    setSocket(socketConnection);
+    
+    // Join the class room to receive and send class-specific notifications
+    socketConnection.emit('joinClass', { classId });
+    
+    return () => {
+      socketConnection.disconnect();
+    };
+  }, [classId]);
 
   useEffect(() => {
     const fetchAnnouncements = async () => {
@@ -31,7 +48,31 @@ const TeacherAnnouncements = ({ classId }) => {
     };
 
     fetchAnnouncements();
-  }, [classId]);
+    
+    // Listen for new announcements from other users
+    if (socket) {
+      socket.on('newAnnouncement', (announcement) => {
+        if (announcement.class === classId && announcement.author._id !== user._id) {
+          // Only update if the announcement is from another user
+          setAnnouncements(prev => [announcement, ...prev]);
+        }
+      });
+      
+      socket.on('deleteAnnouncement', (data) => {
+        if (data.classId === classId && data.authorId !== user._id) {
+          // Only update if the deletion is from another user
+          setAnnouncements(prev => prev.filter(a => a._id !== data.announcementId));
+        }
+      });
+    }
+    
+    return () => {
+      if (socket) {
+        socket.off('newAnnouncement');
+        socket.off('deleteAnnouncement');
+      }
+    };
+  }, [classId, socket, user._id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -51,6 +92,15 @@ const TeacherAnnouncements = ({ classId }) => {
         setAnnouncements([newAnnouncement, ...announcements]);
         setTitle('');
         setContent('');
+        
+        // Emit socket event for real-time updates
+        if (socket) {
+          socket.emit('sendNotification', {
+            type: 'newAnnouncement',
+            data: newAnnouncement,
+            classId
+          });
+        }
       } else {
         throw new Error(response.data.message || 'Failed to create announcement');
       }
@@ -70,6 +120,18 @@ const TeacherAnnouncements = ({ classId }) => {
       const response = await api.delete(`/classes/${classId}/announcements/${id}`);
       if (response.data.success) {
         setAnnouncements(announcements.filter(announcement => announcement._id !== id));
+        
+        // Emit socket event for real-time updates
+        if (socket) {
+          socket.emit('sendNotification', {
+            type: 'deleteAnnouncement',
+            data: {
+              announcementId: id,
+              classId,
+              authorId: user._id
+            }
+          });
+        }
       } else {
         throw new Error(response.data.message || 'Failed to delete announcement');
       }
@@ -80,7 +142,8 @@ const TeacherAnnouncements = ({ classId }) => {
   };
 
   return (
-    <ClassComponentWrapper title="Class Announcements">
+    <div className="bg-white rounded-lg p-6">
+      <h2 className="text-xl font-semibold mb-6">Class Announcements</h2>
       <div className="space-y-6">
         {/* Create Announcement Form */}
         <div className="bg-white p-6 rounded-lg shadow-sm">
@@ -146,7 +209,7 @@ const TeacherAnnouncements = ({ classId }) => {
             <div className="space-y-4">
               {announcements.map((announcement) => (
                 <div
-                  key={announcement.id}
+                  key={announcement._id || announcement.id}
                   className="bg-white p-6 rounded-lg shadow-sm"
                 >
                   <div className="flex justify-between items-start">
@@ -158,12 +221,12 @@ const TeacherAnnouncements = ({ classId }) => {
                         {announcement.content}
                       </p>
                       <div className="mt-2 text-sm text-gray-500">
-                        Posted by {announcement.author} on{' '}
+                        Posted by {typeof announcement.author === 'object' ? announcement.author.name : announcement.author} on{' '}
                         {new Date(announcement.createdAt).toLocaleDateString()}
                       </div>
                     </div>
                     <button
-                      onClick={() => handleDelete(announcement.id)}
+                      onClick={() => handleDelete(announcement._id || announcement.id)}
                       className="p-2 text-gray-400 hover:text-red-500 rounded-full hover:bg-gray-100 transition-colors"
                       title="Delete announcement"
                     >
@@ -176,7 +239,7 @@ const TeacherAnnouncements = ({ classId }) => {
           )}
         </div>
       </div>
-    </ClassComponentWrapper>
+    </div>
   );
 };
 

@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 import { useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { FaBook, FaClipboardCheck, FaBullhorn, FaGraduationCap, FaChalkboardTeacher } from 'react-icons/fa';
 import StudentClasses from '../components/StudentClasses';
 import StudentAssignments from '../components/StudentAssignments';
 import StudentGrades from '../components/StudentGrades';
 import StudentNotes from '../components/StudentNotes';
 import StudentAnnouncements from '../components/StudentAnnouncements';
+import StudentPeople from '../components/StudentPeople';
+import { SiGoogleclassroom } from 'react-icons/si';
+import ClassesPage from '../pages/ClassesPage'
 
 const StudentDashboard = () => {
+  const navigate = useNavigate();
   const { current: selectedClass } = useSelector((state) => state.classes);
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -60,6 +65,18 @@ const StudentDashboard = () => {
             <StudentAnnouncements classId={selectedClass._id} />
           </div>
         );
+      case 'people':
+        return (
+          <div className="bg-white p-6 rounded-lg shadow-sm">
+            <StudentPeople classId={selectedClass._id} />
+          </div>
+        );
+      case 'classes':
+        return (
+          <div className="bg-white p-6 rounded-lg shadow-sm">
+            <ClassesPage classId={selectedClass._id} />
+          </div>
+        );
       default:
         return null;
     }
@@ -81,7 +98,7 @@ const StudentDashboard = () => {
             {selectedClass && (
               <div className="mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 mb-2">{selectedClass.name}</h1>
-                <p className="text-gray-600">{selectedClass.description}</p>
+                <p className="text-gray-500">{selectedClass.description}</p>
               </div>
             )}
 
@@ -95,6 +112,8 @@ const StudentDashboard = () => {
                     { id: 'notes', label: 'Notes', icon: FaBook },
                     { id: 'grades', label: 'Grades', icon: FaGraduationCap },
                     { id: 'announcements', label: 'Announcements', icon: FaBullhorn },
+                    { id: 'people', label: 'People', icon: FaChalkboardTeacher },
+                    { id: 'classes', label: 'Myclasses', icon: SiGoogleclassroom },
                   ].map((tab) => (
                     <button
                       key={tab.id}

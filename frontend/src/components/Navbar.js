@@ -3,14 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout } from '../store/authSlice';
 import Notifications from './Notifications';
-import { BookOpen, Moon, Sun } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 
 const Navbar = () => {
   const { user } = useSelector((state) => state.auth);
   const dispatch = useDispatch();
   const navigate = useNavigate();
-
-  const [darkMode, setDarkMode] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
   // Scroll background effect
@@ -19,11 +17,6 @@ const Navbar = () => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  // Dark mode class toggle
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode);
-  }, [darkMode]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -51,11 +44,13 @@ const Navbar = () => {
 
         {/* Right Actions */}
         <div className="flex items-center space-x-6">
-         
-
           {user ? (
             <>
-              <Notifications />
+              {/* Notifications with separator */}
+              <div className="flex items-center">
+                <Notifications />
+                <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-4"></div>
+              </div>
               {user.role === 'student' && (
                 <Link
                   to="/dashboard/student"

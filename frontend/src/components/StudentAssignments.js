@@ -11,7 +11,17 @@ const StudentAssignments = ({ classId }) => {
   const [commentInputs, setCommentInputs] = useState({});
 
   React.useEffect(() => {
-    if (classId) dispatch(fetchAssignments(classId));
+    if (classId) {
+      console.log('Fetching assignments for class:', classId);
+      dispatch(fetchAssignments(classId))
+        .unwrap()
+        .then(result => {
+          console.log('Assignments fetched successfully:', result);
+        })
+        .catch(error => {
+          console.error('Error fetching assignments:', error);
+        });
+    }
   }, [classId, dispatch]);
 
   const handleFileChange = (id, fileList) => {
@@ -72,16 +82,7 @@ const StudentAssignments = ({ classId }) => {
                     </div>
                   )}
                   <div className="text-gray-700 mt-1">{a.description}</div>
-                  {a.rubric && a.rubric.length > 0 && (
-                    <div className="mt-1">
-                      <div className="font-semibold">Rubric:</div>
-                      <ul className="list-disc ml-6">
-                        {a.rubric.map((r, i) => (
-                          <li key={i}>{r.criterion} ({r.maxPoints} pts)</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+
                   <div className="mt-2">
                     <form className="flex flex-col md:flex-row md:items-center md:space-x-2 space-y-2 md:space-y-0" onSubmit={e => handleSubmit(e, a._id)}>
                       <input type="file" multiple accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.ppt,.pptx" onChange={e => handleFileChange(a._id, e.target.files)} />
@@ -145,4 +146,4 @@ const StudentAssignments = ({ classId }) => {
   );
 };
 
-export default StudentAssignments; 
+export default StudentAssignments;

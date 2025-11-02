@@ -13,16 +13,29 @@ const initialState = {
 
 export const fetchAssignments = createAsyncThunk('assignments/fetchAssignments', async (classId, thunkAPI) => {
   try {
-    const res = await api.get(`/api/assignments/${classId}`);
-    return res.data.assignments;
+    const res = await api.get(`/assignments/${classId}`);
+    if (!res.data || !Array.isArray(res.data.assignments)) {
+      console.error('Invalid response format:', res.data);
+      return thunkAPI.rejectWithValue('Invalid response format from server');
+    }
+    // Process assignments to ensure student data is properly handled
+    const assignments = res.data.assignments.map(assignment => ({
+      ...assignment,
+      submissions: assignment.submissions.map(submission => ({
+        ...submission,
+        student: submission.student || { name: 'Unknown Student' }
+      }))
+    }));
+    return assignments;
   } catch (err) {
-    return thunkAPI.rejectWithValue('Failed to fetch assignments');
+    console.error('Error fetching assignments:', err);
+    return thunkAPI.rejectWithValue(err.response?.data?.message || 'Failed to fetch assignments');
   }
 });
 
 export const getAssignment = createAsyncThunk('assignments/getAssignment', async (id, thunkAPI) => {
   try {
-    const res = await api.get(`/api/assignments/details/${id}`);
+    const res = await api.get(`/assignments/details/${id}`);
     return res.data.assignment;
   } catch (err) {
     return thunkAPI.rejectWithValue('Failed to fetch assignment');
@@ -44,7 +57,7 @@ export const createAssignment = createAsyncThunk('assignments/createAssignment',
     ['classId', 'title', 'description', 'dueDate', 'topic', 'scheduledAt', 'isDraft'].forEach(key => {
       if (data[key] !== undefined) formData.append(key, data[key]);
     });
-    const res = await api.post('/api/assignments', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const res = await api.post('/assignments', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
     return res.data.assignment;
   } catch (err) {
     return thunkAPI.rejectWithValue('Failed to create assignment');
@@ -58,7 +71,7 @@ export const submitAssignment = createAsyncThunk('assignments/submitAssignment',
       Array.from(files).forEach(file => formData.append('files', file));
     }
     if (textEntry) formData.append('textEntry', textEntry);
-    const res = await api.post(`/api/assignments/${id}/submit`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const res = await api.post(`/assignments/${id}/submit`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
     return res.data;
   } catch (err) {
     return thunkAPI.rejectWithValue('Failed to submit assignment');
@@ -68,7 +81,7 @@ export const submitAssignment = createAsyncThunk('assignments/submitAssignment',
 // Add thunk for adding a comment to a submission
 export const addSubmissionComment = createAsyncThunk('assignments/addSubmissionComment', async ({ assignmentId, submissionId, text }, thunkAPI) => {
   try {
-    const res = await api.post(`/api/assignments/${assignmentId}/submission/${submissionId}/comment`, { text });
+    const res = await api.post(`/assignments/${assignmentId}/submission/${submissionId}/comment`, { text });
     return res.data;
   } catch (err) {
     return thunkAPI.rejectWithValue('Failed to add comment');

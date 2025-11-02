@@ -43,7 +43,7 @@ const LandingPage = () => {
       
 
       {/* Hero Section */}
-      <section className="relative pt-24 pb-16 px-8">
+      <section className="relative pt-24 pb-16 px-8 mt-10">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col lg:flex-row items-center justify-between space-y-12 lg:space-y-0">
             <div className="max-w-2xl space-y-8 lg:pr-8">
@@ -72,7 +72,7 @@ const LandingPage = () => {
                 <a href="/login">
                   <button className="group relative px-8 py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl font-bold text-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-300 shadow-2xl hover:shadow-3xl transform hover:scale-105">
                     <span className="flex items-center justify-center space-x-2">
-                      <span>Start Teaching</span>
+                      <span>Start Here</span>
                       <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                     </span>
                   </button>
@@ -120,21 +120,7 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-16 px-8 bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
-            {stats.map((stat, index) => (
-              <div key={index} className="text-center group">
-                <div className="text-4xl lg:text-5xl font-black bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent group-hover:scale-110 transition-transform duration-300">
-                  {stat.number}
-                </div>
-                <div className="text-gray-600 dark:text-gray-400 font-medium mt-2">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+    
 
       {/* Features Section */}
       <section className="py-20 px-8">

@@ -3,13 +3,12 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { fetchClasses, createClass, joinClassByCode } from '../store/classSlice';
 import { FaPlus, FaChalkboardTeacher, FaUserGraduate, FaEllipsisV, FaFolder } from 'react-icons/fa';
-import ClassDetails from '../components/ClassDetails';
 
 const TeacherDashboard = () => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
   const { classes, loading, error } = useSelector((state) => state.classes);
-  const [selectedClass, setSelectedClass] = useState(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
@@ -107,7 +106,7 @@ const TeacherDashboard = () => {
               <div
                 key={classItem._id}
                 className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow overflow-hidden cursor-pointer"
-                onClick={() => setSelectedClass({ ...classItem, headerColor: getRandomHeaderColor() })}
+                onClick={() => navigate(`/class/${classItem._id}`)}
               >
                 <div className={`${getRandomHeaderColor()} h-24 p-4 text-white relative`}>
                   <h3 className="text-xl font-medium">{classItem.name}</h3>
@@ -151,7 +150,7 @@ const TeacherDashboard = () => {
               <div
                 key={classItem._id}
                 className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow overflow-hidden cursor-pointer"
-                onClick={() => setSelectedClass({ ...classItem, headerColor: getRandomHeaderColor() })}
+                onClick={() => navigate(`/class/${classItem._id}`)}
               >
                 <div className={`${getRandomHeaderColor()} h-24 p-4 text-white relative`}>
                   <h3 className="text-xl font-medium">{classItem.name}</h3>
@@ -316,13 +315,6 @@ const TeacherDashboard = () => {
         </div>
       )}
 
-      {/* Class Details Modal */}
-      {selectedClass && (
-        <ClassDetails
-          classData={selectedClass}
-          onClose={() => setSelectedClass(null)}
-        />
-      )}
     </div>
   );
 };

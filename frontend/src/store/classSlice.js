@@ -75,23 +75,40 @@ export const joinClassByCode = createAsyncThunk(
   }
 );
 
-export const getClass = createAsyncThunk('classes/getClass', async (id, thunkAPI) => {
-  try {
-    const res = await api.get(`/api/classes/${id}`);
-    return res.data.class;
-  } catch (err) {
-    return thunkAPI.rejectWithValue('Failed to fetch class');
+export const getClass = createAsyncThunk(
+  'classes/getClass',
+  async (id, { rejectWithValue }) => {
+    try {
+      const response = await api.get(`/classes/${id}`);
+      if (!response.data.success) {
+        return rejectWithValue(response.data.message || 'Failed to fetch class details');
+      }
+      return response.data.data;
+    } catch (error) {
+      console.error('Get class error:', error.response || error);
+      return rejectWithValue(
+        error.response?.data?.message || 
+        error.message || 
+        'Failed to fetch class details. Please try again.'
+      );
+    }
   }
-});
+);
 
 export const fetchAnnouncements = createAsyncThunk(
   'classes/fetchAnnouncements',
   async (classId, { rejectWithValue }) => {
     try {
-      const response = await api.get(`/api/classes/${classId}/announcements`);
-      return response.data.announcements;
+      const response = await api.get(`/classes/${classId}/announcements`);
+      // Always return an array, even if empty
+      return Array.isArray(response.data.data) ? response.data.data : [];
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || 'Failed to fetch announcements');
+      console.error('Error fetching announcements:', error.response || error);
+      return rejectWithValue(
+        error.response?.data?.message || 
+        error.message || 
+        'Failed to fetch announcements'
+      );
     }
   }
 );

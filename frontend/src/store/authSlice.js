@@ -27,11 +27,17 @@ export const register = createAsyncThunk(
   'auth/register',
   async (userData, { rejectWithValue }) => {
     try {
-      const response = await api.post('/api/auth/register', userData);
-      const { token, user } = response.data;
-      localStorage.setItem('token', token);
-      return { token, user };
+      // FIX: Remove duplicate /api from endpoint
+      const response = await api.post('/auth/register', userData);
+      if (response.data.success) {
+        const { token, user } = response.data;
+        localStorage.setItem('token', token);
+        return { token, user };
+      }
+      // If backend returns success: false, show message
+      return rejectWithValue(response.data.message || 'Registration failed');
     } catch (error) {
+      console.error('Register error:', error.response?.data || error.message);
       return rejectWithValue(error.response?.data?.message || error.message || 'Something went wrong');
     }
   }
@@ -41,7 +47,7 @@ export const forgotPassword = createAsyncThunk(
   'auth/forgotPassword',
   async (email, { rejectWithValue }) => {
     try {
-      const response = await api.post('/api/auth/forgot-password', { email });
+      const response = await api.post('/auth/forgot-password', { email });
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message || 'Something went wrong');
@@ -67,8 +73,8 @@ export const rehydrateUser = createAsyncThunk(
     try {
       const token = localStorage.getItem('token');
       if (!token) return null;
-      
-      const response = await api.get('/api/auth/me');
+      // FIX: Remove duplicate /api from endpoint
+      const response = await api.get('/auth/me');
       return { token, user: response.data.user };
     } catch (error) {
       localStorage.removeItem('token');

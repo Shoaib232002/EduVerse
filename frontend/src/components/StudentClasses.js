@@ -62,7 +62,8 @@ const StudentClasses = ({ onSelect }) => {
 
   const handleSelect = (cls) => {
     dispatch(setCurrentClass(cls));
-    if (onSelect) onSelect(cls);
+    // Don't navigate away, just set the current class
+    // if (onSelect) onSelect(cls);
   };
 
   return (
@@ -163,4 +164,4 @@ const StudentClasses = ({ onSelect }) => {
   );
 };
 
-export default StudentClasses; 
+export default StudentClasses;

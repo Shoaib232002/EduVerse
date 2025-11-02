@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import ClassComponentWrapper from './ClassComponentWrapper';
 import { FaPlus, FaTrash, FaEdit } from 'react-icons/fa';
 
 const TeacherRubric = ({ classId }) => {
@@ -26,7 +25,8 @@ const TeacherRubric = ({ classId }) => {
   };
 
   return (
-    <ClassComponentWrapper title="Rubrics">
+    <div className="bg-white rounded-lg p-6">
+      <h2 className="text-xl font-semibold mb-6">Rubrics</h2>
       <div className="space-y-6">
         {/* Rubric List */}
         <div className="flex justify-between items-center">
@@ -161,7 +161,7 @@ const TeacherRubric = ({ classId }) => {
           </div>
         )}
       </div>
-    </ClassComponentWrapper>
+    </div>
   );
 };
 

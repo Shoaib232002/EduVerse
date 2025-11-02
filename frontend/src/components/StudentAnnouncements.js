@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { FaBullhorn, FaClock, FaUser } from 'react-icons/fa';
 import { fetchAnnouncements } from '../store/classSlice';
+import { io } from 'socket.io-client';
 
 const StudentAnnouncements = ({ classId }) => {
   const dispatch = useDispatch();
@@ -12,10 +13,32 @@ const StudentAnnouncements = ({ classId }) => {
   }));
 
   useEffect(() => {
-    if (classId) {
-      dispatch(fetchAnnouncements(classId));
-    }
+    if (!classId) return;
+    dispatch(fetchAnnouncements(classId));
+    // Connect to socket for real-time announcements
+    const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+    const socket = io(SOCKET_URL);
+    // Join the class room to receive class-specific notifications
+    socket.emit('joinClass', { classId });
+    // Listen for new announcements
+    socket.on('newAnnouncement', (announcement) => {
+      if (announcement.class === classId) {
+        // Refresh announcements when a new one is created
+        dispatch(fetchAnnouncements(classId));
+      }
+    });
+    return () => {
+      socket.disconnect();
+    };
   }, [dispatch, classId]);
+
+  if (!classId) {
+    return (
+      <div className="p-4 text-yellow-600 bg-yellow-50 rounded">
+        No class selected. Please select or join a class to view announcements.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -39,7 +62,6 @@ const StudentAnnouncements = ({ classId }) => {
         <FaBullhorn className="text-blue-500" />
         <h2 className="text-xl font-semibold">Class Announcements</h2>
       </div>
-
       {announcements && announcements.length > 0 ? (
         <div className="space-y-4">
           {announcements.map((announcement) => (
@@ -71,10 +93,11 @@ const StudentAnnouncements = ({ classId }) => {
                       <a
                         key={index}
                         href={attachment.url}
-                        download
-                        className="flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors text-sm"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 underline"
                       >
-                        {attachment.name}
+                        Attachment {index + 1}
                       </a>
                     ))}
                   </div>
@@ -84,9 +107,8 @@ const StudentAnnouncements = ({ classId }) => {
           ))}
         </div>
       ) : (
-        <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg">
-          <FaBullhorn className="mx-auto text-4xl mb-2 text-gray-400" />
-          <p>No announcements posted yet.</p>
+        <div className="text-center py-8 text-gray-500">
+          No announcements yet.
         </div>
       )}
     </div>

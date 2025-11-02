@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
 import { useSelector } from 'react-redux';
-import { FaBook, FaClipboardList, FaRuler, FaTimes, FaUpload, FaBullhorn, FaUsers, FaGraduationCap } from 'react-icons/fa';
+import { FaBook, FaClipboardList, FaTimes, FaUpload, FaBullhorn, FaUsers, FaGraduationCap } from 'react-icons/fa';
 import TeacherNotes from './TeacherNotes';
+import StudentNotes from './StudentNotes';
 import TeacherAssignments from './TeacherAssignments';
+import StudentAssignments from './StudentAssignments';
 import TeacherGrading from './TeacherGrading';
-import TeacherRubric from './TeacherRubric';
+import StudentGrading from './StudentGrading';
+
 import TeacherAnnouncements from './TeacherAnnouncements';
+import StudentAnnouncements from './StudentAnnouncements';
 import TeacherPeople from './TeacherPeople';
+import StudentPeople from './StudentPeople';
+import ClassComponentWrapper from './ClassComponentWrapper';
 
 const TabButton = ({ active, onClick, children }) => (
   <button
@@ -27,7 +33,7 @@ const ClassDetails = ({ classData, onClose }) => {
   const isTeacher = classData.teacher === user?._id;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-8">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-8 ">
       <div className="bg-gray-100 rounded-lg w-full max-w-4xl mx-4 my-8 max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className={`${classData.headerColor || 'bg-blue-600'} p-6 rounded-t-lg text-white relative flex-shrink-0`}>
@@ -103,16 +109,7 @@ const ClassDetails = ({ classData, onClose }) => {
               <FaGraduationCap /> Grading
             </div>
           </TabButton>
-          {isTeacher && (
-            <TabButton
-              active={activeTab === 'rubric'}
-              onClick={() => setActiveTab('rubric')}
-            >
-              <div className="flex items-center gap-2 min-w-[120px] justify-center">
-                <FaRuler /> Rubric
-              </div>
-            </TabButton>
-          )}
+
           <TabButton
             active={activeTab === 'people'}
             onClick={() => setActiveTab('people')}
@@ -128,32 +125,48 @@ const ClassDetails = ({ classData, onClose }) => {
           <div className="max-w-3xl mx-auto">
             {activeTab === 'announcements' && (
               <div className="min-h-[500px]">
-                <TeacherAnnouncements classId={classData._id} />
+                <ClassComponentWrapper 
+                  TeacherComponent={TeacherAnnouncements} 
+                  StudentComponent={StudentAnnouncements} 
+                  classId={classData._id} 
+                />
               </div>
             )}
             {activeTab === 'notes' && (
               <div className="min-h-[500px]">
-                <TeacherNotes classId={classData._id} />
+                <ClassComponentWrapper 
+                  TeacherComponent={TeacherNotes} 
+                  StudentComponent={StudentNotes} 
+                  classId={classData._id} 
+                />
               </div>
             )}
             {activeTab === 'assignments' && (
               <div className="min-h-[500px]">
-                <TeacherAssignments classId={classData._id} />
+                <ClassComponentWrapper 
+                  TeacherComponent={TeacherAssignments} 
+                  StudentComponent={StudentAssignments} 
+                  classId={classData._id} 
+                />
               </div>
             )}
             {activeTab === 'grading' && (
               <div className="min-h-[500px]">
-                <TeacherGrading classId={classData._id} />
+                <ClassComponentWrapper 
+                  TeacherComponent={TeacherGrading} 
+                  StudentComponent={StudentGrading} 
+                  classId={classData._id} 
+                />
               </div>
             )}
-            {activeTab === 'rubric' && isTeacher && (
-              <div className="min-h-[500px]">
-                <TeacherRubric classId={classData._id} />
-              </div>
-            )}
+
             {activeTab === 'people' && (
               <div className="min-h-[500px]">
-                <TeacherPeople classId={classData._id} />
+                <ClassComponentWrapper 
+                  TeacherComponent={TeacherPeople} 
+                  StudentComponent={StudentPeople} 
+                  classId={classData._id} 
+                />
               </div>
             )}
           </div>
