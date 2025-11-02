@@ -4,7 +4,7 @@ const cloudinary = require('../config/cloudinary');
 
 exports.createAssignment = async (req, res) => {
   try {
-    const { classId, title, description, dueDate, topic, scheduledAt, isDraft, rubric } = req.body;
+    const { classId, title, description, dueDate, topic, scheduledAt, isDraft } = req.body;
     let attachments = [];
     // Handle multiple file uploads
     if (req.files && req.files.length > 0) {
@@ -21,15 +21,7 @@ exports.createAssignment = async (req, res) => {
         });
       }
     }
-    // Parse rubric if it's a string
-    let parsedRubric = rubric;
-    if (typeof rubric === 'string') {
-      try {
-        parsedRubric = JSON.parse(rubric);
-      } catch (e) {
-        parsedRubric = [];
-      }
-    }
+
     const assignment = await Assignment.create({
       class: classId,
       title,
@@ -38,14 +30,36 @@ exports.createAssignment = async (req, res) => {
       topic,
       dueDate,
       scheduledAt,
-      isDraft: isDraft || false,
-      rubric: parsedRubric || []
+      isDraft: isDraft || false
     });
+    // Update class with assignment reference
     await Class.findByIdAndUpdate(classId, { $push: { assignments: assignment._id } });
     // Emit notification to class if not draft or scheduled
-    const io = req.app.get('io');
-    if (io && !assignment.isDraft && (!assignment.scheduledAt || new Date(assignment.scheduledAt) <= new Date())) {
-      io.sendNotification(classId, { type: 'assignment', message: `New assignment: ${title}`, assignmentId: assignment._id }, true);
+    if (!assignment.isDraft && (!assignment.scheduledAt || new Date(assignment.scheduledAt) <= new Date())) {
+      const classObj = await Class.findById(classId).populate('students', '_id name');
+      const io = req.app.get('io'); // Get io instance correctly
+      
+      if (classObj && io) {
+        const notificationData = {
+          type: 'assignment',
+          message: `New assignment: ${title}`,
+          data: {
+            assignmentId: assignment._id,
+            title,
+            class: classId,
+            dueDate,
+            teacher: req.user.name
+          }
+        };
+
+        // Send notification to each student individually
+        classObj.students.forEach(student => {
+          io.to(student._id.toString()).emit('notification', notificationData);
+        });
+
+        // Also emit to class room for real-time updates
+        io.to(classId).emit('newAssignment', assignment);
+      }
     }
     res.status(201).json({ assignment });
   } catch (err) {
@@ -56,9 +70,27 @@ exports.createAssignment = async (req, res) => {
 exports.getAssignments = async (req, res) => {
   try {
     const { classId } = req.params;
-    const assignments = await Assignment.find({ class: classId }).sort({ dueDate: 1 });
-    res.json({ assignments });
+    const assignments = await Assignment.find({ class: classId })
+      .sort({ dueDate: 1 })
+      .populate({
+        path: 'submissions.student',
+        select: 'name email',
+        model: 'User'
+      })
+      .lean();  // Convert to plain JavaScript objects
+    
+    // Ensure every submission has a populated student
+    const processedAssignments = assignments.map(assignment => ({
+      ...assignment,
+      submissions: assignment.submissions.map(submission => ({
+        ...submission,
+        student: submission.student || null
+      }))
+    }));
+    
+    res.json({ assignments: processedAssignments });
   } catch (err) {
+    console.error('Error in getAssignments:', err);
     res.status(500).json({ message: 'Failed to fetch assignments', error: err.message });
   }
 };
@@ -66,7 +98,8 @@ exports.getAssignments = async (req, res) => {
 exports.getAssignment = async (req, res) => {
   try {
     const { id } = req.params;
-    const assignment = await Assignment.findById(id);
+    const assignment = await Assignment.findById(id)
+      .populate('submissions.student', 'name email');
     if (!assignment) return res.status(404).json({ message: 'Assignment not found' });
     res.json({ assignment });
   } catch (err) {
@@ -78,7 +111,7 @@ exports.submitAssignment = async (req, res) => {
   try {
     const { id } = req.params;
     const { textEntry } = req.body;
-    const assignment = await Assignment.findById(id);
+    let assignment = await Assignment.findById(id);
     if (!assignment) return res.status(404).json({ message: 'Assignment not found' });
     let files = [];
     if (req.files && req.files.length > 0) {
@@ -104,8 +137,21 @@ exports.submitAssignment = async (req, res) => {
     };
     assignment.submissions.push(submission);
     await assignment.save();
-    res.status(201).json({ message: 'Submission successful' });
+
+    // Fetch the updated assignment with populated student data
+    assignment = await Assignment.findById(id)
+      .populate({
+        path: 'submissions.student',
+        select: 'name email',
+        model: 'User'
+      });
+
+    res.status(201).json({ 
+      message: 'Submission successful', 
+      assignment: assignment.toObject() 
+    });
   } catch (err) {
+    console.error('Error in submitAssignment:', err);
     res.status(500).json({ message: 'Failed to submit assignment', error: err.message });
   }
 };
@@ -113,20 +159,35 @@ exports.submitAssignment = async (req, res) => {
 exports.gradeAssignment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { studentId, grade, feedback } = req.body;
+    const { submissionId, grade, feedback } = req.body;
     const assignment = await Assignment.findById(id);
     if (!assignment) return res.status(404).json({ message: 'Assignment not found' });
-    const submission = assignment.submissions.find(sub => sub.student.toString() === studentId);
+    const submission = assignment.submissions.id(submissionId);
     if (!submission) return res.status(404).json({ message: 'Submission not found' });
     submission.grade = grade;
     submission.feedback = feedback;
+    submission.status = 'graded';
     await assignment.save();
-    // Emit notification to student
-    const io = req.app.get('io');
-    if (io) {
-      io.sendNotification(studentId, { type: 'grade', message: `You received a grade: ${grade}`, assignmentId: assignment._id });
+    // Populate the student data
+    await assignment.populate('submissions.student', 'name email');
+    
+    // Send grade notification to student
+    if (req.app.io && submission.student) {
+      const notificationData = {
+        type: 'grade',
+        message: `You received a grade of ${grade} for assignment "${assignment.title}"`,
+        data: {
+          assignmentId: assignment._id,
+          title: assignment.title,
+          grade,
+          class: assignment.class,
+          feedback
+        }
+      };
+      req.app.io.to(submission.student.toString()).emit('notification', notificationData);
     }
-    res.json({ message: 'Graded successfully' });
+    
+    res.json({ assignment });
   } catch (err) {
     res.status(500).json({ message: 'Failed to grade assignment', error: err.message });
   }

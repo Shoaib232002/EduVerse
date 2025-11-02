@@ -153,9 +153,6 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-exports.googleCallback = async (req, res) => {
-  // TODO: Handle Google OAuth callback, create/find user, send JWT
-};
 
 exports.getMe = async (req, res) => {
   try {
@@ -167,5 +164,43 @@ exports.getMe = async (req, res) => {
     res.json({ success: true, user });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to load user data' });
+  }
+};
+
+exports.refresh = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+
+    // Verify the current token (even if expired)
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { ignoreExpiration: true });
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Generate new token
+    const newToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token: newToken,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(401).json({ success: false, message: 'Invalid token' });
   }
 };

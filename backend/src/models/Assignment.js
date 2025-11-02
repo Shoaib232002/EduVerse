@@ -11,7 +11,7 @@ const submissionSchema = new mongoose.Schema({
   files: [String], // Multiple file URLs
   textEntry: String,
   submittedAt: Date,
-  grade: String,
+  grade: Number,
   feedback: String,
   comments: [commentSchema],
   status: { type: String, enum: ['submitted', 'graded', 'returned', 'missing', 'late'], default: 'submitted' }
@@ -26,11 +26,8 @@ const assignmentSchema = new mongoose.Schema({
   dueDate: { type: Date },
   scheduledAt: { type: Date }, // For scheduled posting
   isDraft: { type: Boolean, default: false },
-  rubric: [{
-    criterion: String,
-    maxPoints: Number
-  }],
+
   submissions: [submissionSchema]
 }, { timestamps: true });
 
-module.exports = mongoose.model('Assignment', assignmentSchema); 
+module.exports = mongoose.model('Assignment', assignmentSchema);

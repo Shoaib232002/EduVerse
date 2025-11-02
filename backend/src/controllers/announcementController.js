@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Announcement = require('../models/Announcement');
 const Class = require('../models/Class');
 
@@ -53,6 +54,25 @@ exports.createAnnouncement = async (req, res) => {
     const populatedAnnouncement = await Announcement.findById(announcement._id)
       .populate('author', 'name');
 
+    // Emit socket event for real-time updates
+    const io = req.app.get('io');
+    if (io) {
+      io.to(classId).emit('newAnnouncement', populatedAnnouncement);
+      
+      // Make sure to use a string for the message, not an object
+      const authorName = populatedAnnouncement.author && 
+                         typeof populatedAnnouncement.author === 'object' && 
+                         populatedAnnouncement.author.name 
+        ? populatedAnnouncement.author.name 
+        : 'teacher';
+        
+      io.to(classId).emit('notification', {
+        type: 'announcement',
+        message: `New announcement: ${title} by ${authorName}`,
+        data: populatedAnnouncement
+      });
+    }
+
     res.status(201).json({
       success: true,
       data: populatedAnnouncement
@@ -70,6 +90,23 @@ exports.deleteAnnouncement = async (req, res) => {
   try {
     const { classId, announcementId } = req.params;
 
+    // First check if the class exists and user has permission
+    const classDoc = await Class.findById(classId);
+    if (!classDoc) {
+      return res.status(404).json({
+        success: false,
+        message: 'Class not found'
+      });
+    }
+
+    if (classDoc.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the class teacher can delete announcements'
+      });
+    }
+
+    // Check if announcement exists
     const announcement = await Announcement.findOne({
       _id: announcementId,
       class: classId
@@ -82,16 +119,24 @@ exports.deleteAnnouncement = async (req, res) => {
       });
     }
 
-    // Check if user has permission to delete
-    const classDoc = await Class.findById(classId);
-    if (classDoc.teacher.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Only the class teacher can delete announcements'
+    // Delete the announcement and update class atomically
+    const deleteResult = await Promise.all([
+      Announcement.deleteOne({ _id: announcementId }),
+      Class.updateOne(
+        { _id: classId },
+        { $pull: { announcements: announcementId } }
+      )
+    ]);
+
+    // Emit socket event for real-time updates
+    const io = req.app.get('io');
+    if (io) {
+      io.to(classId).emit('deleteAnnouncement', {
+        announcementId: announcementId,
+        classId,
+        authorId: req.user._id.toString()
       });
     }
-
-    await announcement.remove();
 
     res.json({
       success: true,

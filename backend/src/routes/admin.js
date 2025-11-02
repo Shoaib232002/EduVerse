@@ -22,4 +22,7 @@ router.delete('/assignments/:id', adminController.deleteAssignment);
 router.get('/notes', adminController.listNotes);
 router.delete('/notes/:id', adminController.deleteNote);
 
+router.get('/announcements', adminController.listAnnouncements);
+router.delete('/announcements/:id', adminController.deleteAnnouncement);
+
 module.exports = router;

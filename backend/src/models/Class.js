@@ -19,6 +19,8 @@ const classSchema = new mongoose.Schema({
   section: { type: String },
   subject: { type: String },
   room: { type: String },
+  assignments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Assignment' }],
+  announcements: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Announcement' }]
 }, { timestamps: true });
 
 module.exports = mongoose.model('Class', classSchema);

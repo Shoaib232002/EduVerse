@@ -104,13 +104,40 @@ exports.getClasses = async (req, res) => {
 
 exports.getClassById = async (req, res) => {
   try {
-    const classData = await Class.findById(req.params.id).populate('teacher', 'name email');
+    const classData = await Class.findById(req.params.id)
+      .populate('teacher', 'name email')
+      .populate('students', 'name email')
+      .populate('meeting');
+      
     if (!classData) {
       return res.status(404).json({ success: false, message: 'Class not found' });
     }
-    res.json({ success: true, data: classData });
+    
+    // Check if the user is authorized to view this class
+    const userId = req.user._id.toString();
+    const isTeacher = classData.teacher._id.toString() === userId;
+    const isStudent = classData.students.some(student => student._id.toString() === userId);
+    
+    if (!isTeacher && !isStudent) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have permission to view this class' 
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      data: {
+        ...classData.toObject(),
+        isTeacher
+      }
+    });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    console.error('Get class by ID error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to fetch class details' 
+    });
   }
 };
 

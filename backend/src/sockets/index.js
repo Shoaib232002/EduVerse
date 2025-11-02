@@ -1,38 +1,102 @@
 const Message = require('../models/Message');
 
+// Store active sockets and their user info
+const activeUsers = new Map();
+
 module.exports = (io) => {
+  // Debug mode
+  const DEBUG = true;
+
   // Utility to emit notification to a user or class
-  io.sendNotification = (target, data, isClass = false) => {
-    if (isClass) io.to(target).emit('notification', data);
-    else io.to(target).emit('notification', data);
-    // Optionally: persist notification to DB
+  io.sendNotification = async (target, data, isClass = false) => {
+    const notificationData = {
+      ...data,
+      id: Date.now(),
+      timestamp: new Date().toISOString()
+    };
+
+    if (isClass) {
+      console.log(`[Socket] Sending class notification to ${target}:`, notificationData);
+      io.to(target).emit('notification', notificationData);
+    } else {
+      console.log(`[Socket] Sending user notification to ${target}:`, notificationData);
+      io.to(target).emit('notification', notificationData);
+    }
   };
 
   io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+    // console.log('User connected:', socket.id);
 
-    socket.on('joinClass', ({ classId, userId }) => {
-      socket.join(classId);
-      socket.join(userId); // Join personal room for direct notifications
-      console.log(`User ${userId} joined class ${classId}`);
+    // Handle joining class and personal rooms
+    socket.on('joinClass', async ({ userId, role }, callback) => {
+      try {
+        if (!userId) {
+          if (DEBUG) console.log('[Socket] No userId provided');
+          return callback?.({ success: false, error: 'No userId provided' });
+        }
+
+        // Store user info with socket
+        activeUsers.set(socket.id, { userId, role });
+        
+        // Join user's personal room
+        await socket.join(userId);
+        if (DEBUG) console.log(`[Socket] User ${userId} (${role}) joined personal room`);
+        
+        // Send a test notification to verify connection
+        io.to(userId).emit('notification', {
+          type: 'system',
+          message: 'Connected to notification system',
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          data: {}
+        });
+
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[Socket] Error in joinClass:', error);
+        callback?.({ success: false, error: error.message });
+      }
     });
 
-    socket.on('chatMessage', async ({ classId, userId, content }) => {
-      // Save message to DB
-      const message = await Message.create({
-        class: classId,
-        sender: userId,
-        content,
-        type: 'text',
-      });
-      // Emit to all in class
-      io.to(classId).emit('chatMessage', {
-        _id: message._id,
-        class: classId,
-        sender: userId,
-        content,
-        createdAt: message.createdAt,
-      });
+    // Handle leaving class and personal rooms
+    socket.on('leaveClass', ({ classId, userId }) => {
+      if (userId) {
+        socket.leave(userId);
+        console.log(`User ${userId} left personal room`);
+      }
+      if (classId) {
+        socket.leave(classId);
+        console.log(`User ${userId} left class ${classId}`);
+      }
+    });
+
+    socket.on('chatMessage', async ({ classId, userId, content, senderName }) => {
+      try {
+        // Save message to DB
+        const message = await Message.create({
+          class: classId,
+          sender: userId,
+          content,
+          type: 'text',
+        });
+        
+        // Emit to all in class with enhanced data
+        io.to(classId).emit('chatMessage', {
+          _id: message._id,
+          class: classId,
+          sender: userId,
+          senderName: senderName || 'Unknown User',
+          content,
+          createdAt: message.createdAt,
+        });
+      } catch (error) {
+        console.error('Error saving chat message:', error);
+        // Send error back to sender only
+        socket.emit('chatError', { 
+          message: 'Failed to send message',
+          error: error.message
+        });
+      }
     });
 
     // Whiteboard sync events
@@ -44,26 +108,151 @@ module.exports = (io) => {
     });
 
     // WebRTC signaling events
-    socket.on('webrtc-offer', ({ classId, offer, from }) => {
-      socket.to(classId).emit('webrtc-offer', { offer, from });
+    socket.on('webrtc-offer', ({ classId, offer, from, role }) => {
+      console.log(`Received offer from ${role} with ID ${from}`);
+      socket.to(classId).emit('webrtc-offer', { offer, from, role });
     });
-    socket.on('webrtc-answer', ({ classId, answer, from }) => {
-      socket.to(classId).emit('webrtc-answer', { answer, from });
+    
+    socket.on('webrtc-answer', ({ classId, answer, from, role }) => {
+      console.log(`Received answer from ${role} with ID ${from}`);
+      socket.to(classId).emit('webrtc-answer', { answer, from, role });
     });
-    socket.on('webrtc-ice-candidate', ({ classId, candidate, from }) => {
-      socket.to(classId).emit('webrtc-ice-candidate', { candidate, from });
+    
+    socket.on('webrtc-ice-candidate', ({ classId, candidate, from, role }) => {
+      console.log(`Received ICE candidate from ${role}`);
+      socket.to(classId).emit('webrtc-ice-candidate', { candidate, from, role });
     });
-    // Optionally: track participants, handle leave, etc.
+    
+    socket.on('get-peer-role', ({ peerId }) => {
+      // Find the peer's role in meeting participants
+      const meetingId = Array.from(socket.rooms).find(room => 
+        io.meetingParticipants && io.meetingParticipants[room]
+      );
+      
+      if (meetingId && io.meetingParticipants[meetingId]) {
+        const peer = io.meetingParticipants[meetingId].find(p => p._id === peerId);
+        if (peer) {
+          socket.emit('peer-role', { id: peerId, role: peer.role });
+        }
+      }
+    });
+    // --- Meeting participants tracking ---
+    // In-memory participants map: { meetingId: [ { _id, name, role, muted, raisedHand } ] }
+    if (!io.meetingParticipants) io.meetingParticipants = {};
 
-    // TODO: Notifications events
+    socket.on('meeting-join', ({ meetingId, user }) => {
+      if (!meetingId || !user) return;
+      if (!io.meetingParticipants[meetingId]) io.meetingParticipants[meetingId] = [];
+      // Add user if not already present
+      if (!io.meetingParticipants[meetingId].find(u => u._id === user._id)) {
+        io.meetingParticipants[meetingId].push({ 
+          ...user, 
+          muted: false, 
+          videoEnabled: true,
+          raisedHand: false, 
+          whiteboardOpen: false 
+        });
+      }
+      io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
 
-    // Notification event (for testing/demo)
-    socket.on('sendNotification', ({ target, data, isClass }) => {
-      io.sendNotification(target, data, isClass);
+      // Broadcast teacher's whiteboard state to new participant
+      const teacher = io.meetingParticipants[meetingId].find(u => u.role === 'teacher');
+      if (teacher) {
+        io.to(user._id).emit('whiteboard-visibility', { open: teacher.whiteboardOpen });
+      }
+    });
+
+    socket.on('meeting-leave', ({ meetingId, userId }) => {
+      if (!meetingId || !userId) return;
+      if (io.meetingParticipants[meetingId]) {
+        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].filter(u => u._id !== userId);
+        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+      }
+    });
+
+    socket.on('get-meeting-participants', ({ meetingId }) => {
+      if (!meetingId) return;
+      io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId] || []);
+    });
+
+    socket.on('meeting-mute', ({ meetingId, userId, muted }) => {
+      if (!meetingId || !userId) return;
+      if (io.meetingParticipants[meetingId]) {
+        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
+          u._id === userId ? { ...u, muted } : u
+        );
+        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+      }
+    });
+
+    socket.on('meeting-video-toggle', ({ meetingId, userId, videoEnabled }) => {
+      if (!meetingId || !userId) return;
+      if (io.meetingParticipants[meetingId]) {
+        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
+          u._id === userId ? { ...u, videoEnabled } : u
+        );
+        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+      }
+    });
+
+    socket.on('meeting-raise-hand', ({ meetingId, userId, raisedHand }) => {
+      if (!meetingId || !userId) return;
+      if (io.meetingParticipants[meetingId]) {
+        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
+          u._id === userId ? { ...u, raisedHand } : u
+        );
+        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+      }
+    });
+
+    // Whiteboard visibility event
+    socket.on('whiteboard-visibility', ({ meetingId, open }) => {
+      // Update teacher's whiteboard state in participants list
+      if (io.meetingParticipants[meetingId]) {
+        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
+          u.role === 'teacher' ? { ...u, whiteboardOpen: open } : u
+        );
+        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+      }
+      io.to(meetingId).emit('whiteboard-visibility', { open });
+    });
+
+    // Notification events
+    socket.on('sendNotification', ({ type, data, classId }) => {
+      if (type === 'newAnnouncement') {
+        // Broadcast new announcement to all users in the class
+        io.to(classId).emit('newAnnouncement', data);
+        
+        // Also send a general notification
+        // Make sure the message is always a string, not an object
+        const authorName = data.author && typeof data.author === 'object' && data.author.name 
+          ? data.author.name 
+          : 'teacher';
+          
+        io.to(classId).emit('notification', {
+          type: 'announcement',
+          message: `New announcement: ${data.title} by ${authorName}`,
+          data: data
+        });
+      } else if (type === 'deleteAnnouncement') {
+        // Broadcast announcement deletion to all users in the class
+        io.to(classId).emit('deleteAnnouncement', data);
+      } else {
+        // Handle other notification types
+        if (data.target) {
+          io.to(data.target).emit('notification', data);
+        } else if (classId) {
+          io.to(classId).emit('notification', data);
+        }
+      }
     });
 
     socket.on('disconnect', () => {
-      console.log('User disconnected:', socket.id);
+      const userInfo = activeUsers.get(socket.id);
+      if (userInfo) {
+        if (DEBUG) console.log(`[Socket] User ${userInfo.userId} disconnected`);
+        activeUsers.delete(socket.id);
+      }
     });
   });
-}; 
+};

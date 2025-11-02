@@ -8,13 +8,16 @@ const notesRouter = require('./notes');
 const meetingRouter = require('./meeting');
 const adminRouter = require('./admin');
 const announcementRouter = require('./announcement');
+const messageRouter = require('./message');
 
+// Mount routes
 router.use('/auth', authRouter);
 router.use('/classes', classRouter);
-router.use('/assignment', assignmentRouter);
+router.use('/classes', announcementRouter);
+router.use('/', messageRouter); // Mount message routes at root to handle all formats
+router.use('/assignments', assignmentRouter);
 router.use('/notes', notesRouter);
-router.use('/meeting', meetingRouter);
+router.use('/meetings', meetingRouter);
 router.use('/admin', adminRouter);
-router.use('/classes', announcementRouter); // Mount announcement routes under /classes
 
-module.exports = router; 
+module.exports = router;

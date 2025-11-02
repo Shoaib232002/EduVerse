@@ -1,3 +1,34 @@
+// Start meeting (teacher only)
+exports.startMeeting = async (req, res) => {
+  try {
+    const meeting = await Meeting.findById(req.params.id);
+    if (!meeting) return res.status(404).json({ success: false, message: 'Meeting not found' });
+    if (String(meeting.host) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Only host can start the meeting' });
+    }
+    meeting.active = true;
+    await meeting.save();
+    res.json({ success: true, data: meeting });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// End meeting (teacher only)
+exports.endMeeting = async (req, res) => {
+  try {
+    const meeting = await Meeting.findById(req.params.id);
+    if (!meeting) return res.status(404).json({ success: false, message: 'Meeting not found' });
+    if (String(meeting.host) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Only host can end the meeting' });
+    }
+    meeting.active = false;
+    await meeting.save();
+    res.json({ success: true, data: meeting });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
 const Meeting = require('../models/Meeting');
 
 exports.createMeeting = async (req, res) => {

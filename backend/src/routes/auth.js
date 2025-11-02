@@ -11,9 +11,6 @@ router.post('/reset-password', authController.resetPassword);
 
 // Protected routes
 router.get('/me', authenticateJWT, authController.getMe);
-
-// OAuth routes
-router.get('/google', (req, res) => res.send('Google OAuth endpoint (to be implemented)'));
-router.get('/google/callback', authController.googleCallback);
+router.post('/refresh', authController.refresh);
 
 module.exports = router;

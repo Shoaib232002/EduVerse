@@ -5,8 +5,9 @@ const { authenticateJWT } = require('../middlewares/auth');
 const { authorizeRoles } = require('../middlewares/roles');
 const { upload } = require('../middlewares/upload');
 
-router.post('/upload', authenticateJWT, authorizeRoles('teacher', 'student'), upload.single('file'), notesController.uploadNote);
+router.post('/upload/:classId', authenticateJWT, authorizeRoles('teacher', 'student'), upload.single('file'), notesController.uploadNote);
 router.get('/:classId', authenticateJWT, notesController.getNotes);
 router.get('/download/:id', authenticateJWT, notesController.downloadNote);
+router.delete('/:classId/:noteId', authenticateJWT, notesController.deleteNote);
 
 module.exports = router; 
