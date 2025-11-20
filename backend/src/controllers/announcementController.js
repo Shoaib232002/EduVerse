@@ -54,23 +54,43 @@ exports.createAnnouncement = async (req, res) => {
     const populatedAnnouncement = await Announcement.findById(announcement._id)
       .populate('author', 'name');
 
-    // Emit socket event for real-time updates
-    const io = req.app.get('io');
-    if (io) {
-      io.to(classId).emit('newAnnouncement', populatedAnnouncement);
-      
-      // Make sure to use a string for the message, not an object
-      const authorName = populatedAnnouncement.author && 
-                         typeof populatedAnnouncement.author === 'object' && 
-                         populatedAnnouncement.author.name 
-        ? populatedAnnouncement.author.name 
-        : 'teacher';
-        
-      io.to(classId).emit('notification', {
-        type: 'announcement',
-        message: `New announcement: ${title} by ${authorName}`,
-        data: populatedAnnouncement
-      });
+    // Emit socket event for real-time updates and notify students individually
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        // Emit to class room for any live viewers
+        io.to(classId).emit('newAnnouncement', populatedAnnouncement);
+
+        // Prepare a safe author name string
+        const authorName = populatedAnnouncement.author && 
+                           typeof populatedAnnouncement.author === 'object' && 
+                           populatedAnnouncement.author.name 
+          ? populatedAnnouncement.author.name 
+          : 'teacher';
+
+        const notificationPayload = {
+          type: 'announcement',
+          message: `New announcement: ${title} by ${authorName}`,
+          data: populatedAnnouncement
+        };
+
+        // Also try to notify each enrolled student directly so they receive notifications even when not on the class page
+        const classWithStudents = await Class.findById(classId).populate('students', '_id name');
+        if (classWithStudents && classWithStudents.students && classWithStudents.students.length > 0) {
+          classWithStudents.students.forEach(student => {
+            try {
+              io.to(student._id.toString()).emit('notification', notificationPayload);
+            } catch (e) {
+              console.error('[Announcements] Failed to send notification to student', student._id, e);
+            }
+          });
+        } else {
+          // Fallback: broadcast to class room
+          io.to(classId).emit('notification', notificationPayload);
+        }
+      }
+    } catch (errorEmit) {
+      console.error('Error emitting announcement notifications:', errorEmit);
     }
 
     res.status(201).json({

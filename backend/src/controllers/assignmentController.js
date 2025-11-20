@@ -172,19 +172,31 @@ exports.gradeAssignment = async (req, res) => {
     await assignment.populate('submissions.student', 'name email');
     
     // Send grade notification to student
-    if (req.app.io && submission.student) {
-      const notificationData = {
-        type: 'grade',
-        message: `You received a grade of ${grade} for assignment "${assignment.title}"`,
-        data: {
-          assignmentId: assignment._id,
-          title: assignment.title,
-          grade,
-          class: assignment.class,
-          feedback
+    try {
+      const io = req.app.get('io');
+      if (io && submission.student) {
+        const notificationData = {
+          type: 'grade',
+          message: `You received a grade of ${grade} for assignment "${assignment.title}"`,
+          data: {
+            assignmentId: assignment._id,
+            title: assignment.title,
+            grade,
+            class: assignment.class,
+            feedback
+          }
+        };
+
+        // Emit to the student's personal room so they'll get a notification even if not in the class page
+        io.to(submission.student.toString()).emit('notification', notificationData);
+
+        // Also emit to the class room for any clients currently viewing the class
+        if (assignment.class) {
+          io.to(assignment.class.toString()).emit('notification', notificationData);
         }
-      };
-      req.app.io.to(submission.student.toString()).emit('notification', notificationData);
+      }
+    } catch (notifyErr) {
+      console.error('Failed to send grade notification:', notifyErr);
     }
     
     res.json({ assignment });

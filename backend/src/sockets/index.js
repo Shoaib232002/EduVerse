@@ -70,6 +70,14 @@ module.exports = (io) => {
       }
     });
 
+    // Handle joining class room for messages
+    socket.on('joinClassRoom', ({ classId }) => {
+      if (classId) {
+        socket.join(classId);
+        if (DEBUG) console.log(`[Socket] User joined class room ${classId}`);
+      }
+    });
+
     socket.on('chatMessage', async ({ classId, userId, content, senderName }) => {
       try {
         // Save message to DB
@@ -99,28 +107,22 @@ module.exports = (io) => {
       }
     });
 
-    // Whiteboard sync events
-    socket.on('whiteboard-draw', ({ classId, data }) => {
-      socket.to(classId).emit('whiteboard-draw', data);
-    });
-    socket.on('whiteboard-clear', ({ classId }) => {
-      io.to(classId).emit('whiteboard-clear');
-    });
+    // Whiteboard functionality removed
 
     // WebRTC signaling events
-    socket.on('webrtc-offer', ({ classId, offer, from, role }) => {
-      console.log(`Received offer from ${role} with ID ${from}`);
-      socket.to(classId).emit('webrtc-offer', { offer, from, role });
+    socket.on('webrtc-offer', ({ to, offer, from, role }) => {
+      console.log(`Received offer from ${role} with ID ${from} to ${to}`);
+      socket.to(to).emit('webrtc-offer', { offer, from, role });
     });
     
-    socket.on('webrtc-answer', ({ classId, answer, from, role }) => {
-      console.log(`Received answer from ${role} with ID ${from}`);
-      socket.to(classId).emit('webrtc-answer', { answer, from, role });
+    socket.on('webrtc-answer', ({ to, answer, from, role }) => {
+      console.log(`Received answer from ${role} with ID ${from} to ${to}`);
+      socket.to(to).emit('webrtc-answer', { answer, from, role });
     });
     
-    socket.on('webrtc-ice-candidate', ({ classId, candidate, from, role }) => {
-      console.log(`Received ICE candidate from ${role}`);
-      socket.to(classId).emit('webrtc-ice-candidate', { candidate, from, role });
+    socket.on('webrtc-ice-candidate', ({ to, candidate, from, role }) => {
+      console.log(`Received ICE candidate from ${role} to ${to}`);
+      socket.to(to).emit('webrtc-ice-candidate', { candidate, from, role });
     });
     
     socket.on('get-peer-role', ({ peerId }) => {
@@ -142,6 +144,8 @@ module.exports = (io) => {
 
     socket.on('meeting-join', ({ meetingId, user }) => {
       if (!meetingId || !user) return;
+      socket.join(meetingId); // Join the meeting room for meeting events
+      socket.join(meetingId); // Also join as class room for chat messages
       if (!io.meetingParticipants[meetingId]) io.meetingParticipants[meetingId] = [];
       // Add user if not already present
       if (!io.meetingParticipants[meetingId].find(u => u._id === user._id)) {
@@ -153,6 +157,7 @@ module.exports = (io) => {
           whiteboardOpen: false 
         });
       }
+      console.log(`[Socket] User ${user.name} joined meeting ${meetingId}. Participants:`, io.meetingParticipants[meetingId]);
       io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
 
       // Broadcast teacher's whiteboard state to new participant
@@ -172,36 +177,63 @@ module.exports = (io) => {
 
     socket.on('get-meeting-participants', ({ meetingId }) => {
       if (!meetingId) return;
-      io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId] || []);
+      console.log(`[Socket] Getting participants for meeting ${meetingId}. Participants:`, io.meetingParticipants[meetingId] || []);
+      socket.emit('meeting-participants', io.meetingParticipants[meetingId] || []);
     });
 
     socket.on('meeting-mute', ({ meetingId, userId, muted }) => {
       if (!meetingId || !userId) return;
       if (io.meetingParticipants[meetingId]) {
-        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
-          u._id === userId ? { ...u, muted } : u
-        );
-        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+        const participant = io.meetingParticipants[meetingId].find(u => u._id === userId);
+        if (participant) {
+          participant.muted = muted;
+          io.to(meetingId).emit('participant-updated', participant);
+        }
       }
     });
 
     socket.on('meeting-video-toggle', ({ meetingId, userId, videoEnabled }) => {
       if (!meetingId || !userId) return;
       if (io.meetingParticipants[meetingId]) {
-        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
-          u._id === userId ? { ...u, videoEnabled } : u
-        );
-        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+        const participant = io.meetingParticipants[meetingId].find(u => u._id === userId);
+        if (participant) {
+          participant.videoEnabled = videoEnabled;
+          io.to(meetingId).emit('participant-updated', participant);
+        }
       }
     });
 
     socket.on('meeting-raise-hand', ({ meetingId, userId, raisedHand }) => {
       if (!meetingId || !userId) return;
       if (io.meetingParticipants[meetingId]) {
-        io.meetingParticipants[meetingId] = io.meetingParticipants[meetingId].map(u =>
-          u._id === userId ? { ...u, raisedHand } : u
-        );
-        io.to(meetingId).emit('meeting-participants', io.meetingParticipants[meetingId]);
+        const participant = io.meetingParticipants[meetingId].find(u => u._id === userId);
+        if (participant) {
+          participant.raisedHand = raisedHand;
+          io.to(meetingId).emit('participant-updated', participant);
+        }
+      }
+    });
+
+    // Meeting end event - clear messages and participants
+    socket.on('meeting-end', async ({ meetingId, classId }) => {
+      if (!meetingId || !classId) return;
+      
+      try {
+        // Clear all messages for this class
+        await Message.deleteMany({ class: classId });
+        
+        // Clear participants for this meeting
+        if (io.meetingParticipants[meetingId]) {
+          delete io.meetingParticipants[meetingId];
+        }
+        
+        // Notify all users in the meeting that it has ended
+        io.to(meetingId).emit('meeting-ended', { meetingId, classId });
+        
+        console.log(`[Socket] Meeting ${meetingId} ended. Messages cleared for class ${classId}.`);
+      } catch (error) {
+        console.error('Error ending meeting:', error);
+        socket.emit('meeting-error', { message: 'Failed to end meeting', error: error.message });
       }
     });
 
