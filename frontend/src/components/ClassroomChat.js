@@ -69,8 +69,10 @@ const ClassroomChat = ({ classId }) => {
       reconnectionAttempts: 5
     });
     
-    // Join class room
+    // Join both personal room and class room
     socketRef.current.emit('joinClass', { classId, userId: user._id });
+    // Explicitly join the class room to receive messages
+    socketRef.current.emit('joinClassRoom', { classId });
     
     // Listen for new messages
     socketRef.current.on('chatMessage', (msg) => {
@@ -95,7 +97,14 @@ const ClassroomChat = ({ classId }) => {
       // Remove temporary message on error
       setMessages(prev => prev.filter(m => !m._id.toString().includes('temp-')));
     });
-    
+
+    // Handle meeting ended event - clear all messages
+    socketRef.current.on('meeting-ended', ({ meetingId, classId }) => {
+      console.log(`Meeting ${meetingId} ended. Clearing messages for class ${classId}.`);
+      setMessages([]); // Clear all messages
+      setError('Meeting has ended. Messages cleared.');
+    });
+
     // Handle connection errors
     socketRef.current.on('connect_error', (error) => {
       console.error('Socket connection error:', error);
@@ -106,6 +115,7 @@ const ClassroomChat = ({ classId }) => {
       if (socketRef.current) {
         socketRef.current.off('chatMessage');
         socketRef.current.off('chatError');
+        socketRef.current.off('meeting-ended');
         socketRef.current.off('connect_error');
         socketRef.current.disconnect();
       }
@@ -235,10 +245,12 @@ const ClassroomChat = ({ classId }) => {
             ) : (
               messages.map((msg, index) => (
                 <li key={msg._id || `temp-${index}`} className={`flex flex-col ${msg.sender === user._id ? 'items-end' : 'items-start'}`}>
-                  <div className={`px-3 py-1 rounded ${msg.sender === user._id ? 'bg-blue-200' : 'bg-gray-200'}`}>
-                    <span className="font-semibold text-xs text-gray-700">
-                      {msg.sender === user._id ? 'You' : (msg.senderName || 'User')}
-                    </span>
+                  <div className={`px-3 py-2 rounded ${msg.sender === user._id ? 'bg-blue-200' : 'bg-gray-200'} max-w-xs`}>
+                    {msg.sender !== user._id && (
+                      <span className="font-bold text-xs text-gray-800 block mb-1">
+                        {msg.senderName || msg.sender?.name || 'Unknown User'}
+                      </span>
+                    )}
                     <span className="block text-sm">{msg.content}</span>
                   </div>
                   <span className="text-xs text-gray-400 mt-1">

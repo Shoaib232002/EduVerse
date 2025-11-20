@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
+import api from '../services/api';
 import { FaBullhorn, FaBell, FaBook, FaStar, FaFileAlt, FaUser } from 'react-icons/fa';
 
 const SOCKET_URL = 'http://localhost:5000'; // Make sure this matches your backend server URL
@@ -149,6 +150,25 @@ const Notifications = () => {
           console.log('[Notifications] Successfully joined notification rooms');
         }
       });
+
+      // Also proactively join all class rooms the user is enrolled in so they receive class-wide notifications
+      (async () => {
+        try {
+          const resp = await api.get('/classes');
+          const classes = resp.data?.data || [];
+          if (Array.isArray(classes) && classes.length > 0) {
+            classes.forEach(cls => {
+              try {
+                if (cls._id) socket.emit('joinClassRoom', { classId: cls._id });
+              } catch (e) {
+                if (DEBUG) console.error('[Notifications] Failed to join class room', cls._id, e);
+              }
+            });
+          }
+        } catch (err) {
+          if (DEBUG) console.error('[Notifications] Failed to fetch classes for room join:', err);
+        }
+      })();
     });
     
     socket.on('connect_error', (error) => {
@@ -278,7 +298,7 @@ const Notifications = () => {
       cleanupSocket();
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [user?._id, cleanupSocket]); // Add user._id and cleanupSocket to dependencies
+  }, [user && user._id, cleanupSocket]); // Add user._id and cleanupSocket to dependencies
 
   const handleBellClick = () => {
     setShowDropdown((show) => !show);

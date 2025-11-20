@@ -5,14 +5,38 @@ import io from 'socket.io-client';
 const SOCKET_URL = (process.env.REACT_APP_API_URL || 'http://localhost:5000').replace(/\/api\/?$/, '');
 console.log('Connecting to socket URL:', SOCKET_URL);
 
-const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
+const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true, studentView = false, participants: participantsProp }) => {
   const { user } = useSelector((state) => state.auth);
   const [peers, setPeers] = useState({}); // { userId: { stream, ref, role } }
   const [localStream, setLocalStream] = useState(null);
   const socketRef = useRef();
   const peerConnections = useRef({});
-  const [teacherStream, setTeacherStream] = useState(null);
   const videoTrackRef = useRef(null);
+
+  // Always use participantsProp if provided, else fallback to internal state
+  const [internalParticipants, setInternalParticipants] = useState([]);
+  const participants = participantsProp || internalParticipants;
+  const [videoStates, setVideoStates] = useState({}); // { userId: boolean }
+
+  // Keep video grid in sync with participants prop in real time
+  useEffect(() => {
+    if (participantsProp) {
+      setVideoStates(prevStates => {
+        const newStates = { ...prevStates };
+        participantsProp.forEach(p => {
+          if (newStates[p._id] === undefined) {
+            newStates[p._id] = p.videoEnabled !== false;
+          }
+        });
+        Object.keys(newStates).forEach(id => {
+          if (!participantsProp.find(p => p._id === id)) {
+            delete newStates[id];
+          }
+        });
+        return newStates;
+      });
+    }
+  }, [participantsProp]);
 
   // Handle video state changes
   useEffect(() => {
@@ -43,6 +67,56 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       console.error('Socket error:', error);
     });
 
+    // Join the meeting and notify others
+    socketRef.current.emit('meeting-join', { 
+      meetingId: classId, 
+      user: { 
+        _id: user._id, 
+        name: user.name, 
+        role: user.role 
+      } 
+    });
+    console.log(`User ${user.name} (${user.role}) joined meeting ${classId}`);
+
+    // Listen for meeting participants to get user info and video states
+    // Only listen to socket if participantsProp is not provided
+    if (!participantsProp) {
+      socketRef.current.on('meeting-participants', (participantsList) => {
+        console.log('Received participants:', participantsList);
+        setInternalParticipants(participantsList);
+        // ...rest of the logic unchanged...
+      });
+    }
+
+    // Listen for meeting participants updates
+    if (!participantsProp) {
+      socketRef.current.on('meeting-participants', (data) => {
+        console.log('Meeting participants updated:', data);
+        setInternalParticipants(data.participants || []);
+        // ...rest of the logic unchanged...
+      });
+    }
+
+
+    // Listen for participant updates (video state changes, etc.)
+    socketRef.current.on('participant-updated', (updatedParticipant) => {
+      console.log('Participant updated:', updatedParticipant);
+      setInternalParticipants(prevParticipants => {
+        const updatedParticipants = prevParticipants.map(p => 
+          p._id === updatedParticipant._id ? updatedParticipant : p
+        );
+        return updatedParticipants;
+      });
+      
+      // Update video state
+      setVideoStates(prevStates => ({
+        ...prevStates,
+        [updatedParticipant._id]: updatedParticipant.videoEnabled !== false
+      }));
+    });
+
+
+
     return () => {
       console.log('Cleaning up video connection');
       socketRef.current.disconnect();
@@ -61,7 +135,7 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       setLocalStream(null);
     }
 
-    // Function to handle media access
+    // Function to handle media access with optimizations
     async function setupMediaStream() {
       try {
         // First try to get existing active devices
@@ -72,19 +146,21 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
         let stream;
         
         try {
-          // Try to get media with specific constraints
+          // Try to get media with optimized constraints for faster loading
           stream = await navigator.mediaDevices.getUserMedia({ 
             video: videoEnabled ? {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 30 }
+              width: { ideal: 640, max: 1280 }, // Start with lower resolution for faster connection
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 15, max: 30 } // Lower frame rate initially
             } : false,
             audio: {
               echoCancellation: true,
-              noiseSuppression: true
+              noiseSuppression: true,
+              autoGainControl: true
             }
           });
-          console.log('Got real media stream');
+          console.log('Got real media stream with optimized settings');
+          
         } catch (initialError) {
           console.error('Initial media access error:', initialError);
           
@@ -138,9 +214,9 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
         console.log('Setting up stream:', stream.id);
         setLocalStream(stream);
         
-        // For teacher, immediately notify others
+        // For teacher, immediately notify others with priority
         if (user.role === 'teacher') {
-          console.log('Teacher notifying students');
+          console.log('Teacher notifying students with priority');
           socketRef.current.emit('webrtc-offer', { 
             classId, 
             offer: null, 
@@ -181,82 +257,120 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
   }, [classId, user]);
 
   useEffect(() => {
-    if (!classId || !user || !localStream) return;
+    if (!localStream || !participants || participants.length === 0 || !socketRef.current || !user) return;
+
+    console.log('Local stream ready, attempting to connect to participants...');
     
-    console.log('Setting up WebRTC signaling...');
-    // Handle signaling
+    // Connect to participants when stream becomes available
+    participants.forEach(participant => {
+      if (participant._id !== user._id && !peerConnections.current[participant._id]) {
+        console.log(`${user.role} connecting to ${participant.name} (${participant._id}) - stream now available`);
+        
+        // Create peer connection
+        const pc = createPeerConnection(participant._id, participant.role);
+        peerConnections.current[participant._id] = pc;
+        
+        // If teacher, initiate offer. If student, wait a moment for teacher's offer first
+        if (user.role === 'teacher') {
+          pc.createOffer().then(offer => {
+            return pc.setLocalDescription(offer);
+          }).then(() => {
+            socketRef.current.emit('webrtc-offer', {
+              to: participant._id,
+              offer: pc.localDescription,
+              from: user._id,
+              role: user.role,
+            });
+          }).catch(err => {
+            console.error(`Error creating teacher offer for ${participant._id}:`, err);
+          });
+        } else if (user.role === 'student') {
+          // Students wait 2 seconds for teacher offer, then initiate if no offer received
+          setTimeout(() => {
+            if (pc.connectionState === 'new') {
+              console.log(`Student initiating connection to teacher ${participant._id}`);
+              pc.createOffer().then(offer => {
+                return pc.setLocalDescription(offer);
+              }).then(() => {
+                socketRef.current.emit('webrtc-offer', {
+                  to: participant._id,
+                  offer: pc.localDescription,
+                  from: user._id,
+                  role: user.role,
+                });
+              }).catch(err => {
+                console.error(`Error creating student offer for ${participant._id}:`, err);
+              });
+            }
+          }, 2000);
+        }
+      }
+    });
+  }, [localStream, participants, user]);
+
+  useEffect(() => {
+    if (!classId || !user || !localStream || !socketRef.current) return;
+    
+    console.log('Setting up WebRTC signaling listeners...');
     const socket = socketRef.current;
     
-    // When another user sends an offer
-    socket.on('webrtc-offer', async ({ offer, from, role }) => {
-      console.log('Received offer from:', role);
+    const handleOffer = async ({ offer, from, role }) => {
+      console.log('Received offer from:', role, from);
       if (from === user._id) return;
       
       try {
-        const pc = createPeerConnection(from);
-        peerConnections.current[from] = pc;
-        
-        if (offer) {
-          console.log('Setting remote description from offer');
-          await pc.setRemoteDescription(new RTCSessionDescription(offer));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit('webrtc-answer', { 
-            classId, 
-            answer, 
-            from: user._id,
-            role: user.role 
-          });
-        } else if (user.role === 'student' && role === 'teacher') {
-          console.log('Creating offer for teacher');
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('webrtc-offer', { 
-            classId, 
-            offer, 
-            from: user._id,
-            role: 'student'
-          });
+        // Create or get existing peer connection
+        let pc = peerConnections.current[from];
+        if (!pc) {
+          pc = createPeerConnection(from, role);
+          peerConnections.current[from] = pc;
         }
+        
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        
+        socket.emit('webrtc-answer', { 
+          to: from,
+          answer, 
+          from: user._id,
+          role: user.role 
+        });
       } catch (err) {
         console.error('WebRTC offer handling error:', err);
       }
-    });
-    // When another user sends an answer
-    socket.on('webrtc-answer', async ({ answer, from }) => {
+    };
+
+    const handleAnswer = async ({ answer, from }) => {
+      console.log('Received answer from:', from);
       if (from === user._id) return;
       const pc = peerConnections.current[from];
       if (pc) {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
       }
-    });
-    // ICE candidates
-    socket.on('webrtc-ice-candidate', async ({ candidate, from }) => {
+    };
+
+    const handleIceCandidate = async ({ candidate, from }) => {
       if (from === user._id) return;
       const pc = peerConnections.current[from];
       if (pc && candidate) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {}
+        } catch (e) {
+          console.error('Error adding ICE candidate:', e);
+        }
       }
-    });
-    // When a new user joins, create an offer
-    socket.on('user-joined', async ({ userId }) => {
-      if (userId === user._id) return;
-      const pc = createPeerConnection(userId);
-      peerConnections.current[userId] = pc;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit('webrtc-offer', { classId, offer, from: user._id });
-    });
-    // Clean up on disconnect
-    return () => {
-      socket.off('webrtc-offer');
-      socket.off('webrtc-answer');
-      socket.off('webrtc-ice-candidate');
-      socket.off('user-joined');
     };
-    // eslint-disable-next-line
+
+    socket.on('webrtc-offer', handleOffer);
+    socket.on('webrtc-answer', handleAnswer);
+    socket.on('webrtc-ice-candidate', handleIceCandidate);
+
+    return () => {
+      socket.off('webrtc-offer', handleOffer);
+      socket.off('webrtc-answer', handleAnswer);
+      socket.off('webrtc-ice-candidate', handleIceCandidate);
+    };
   }, [classId, user, localStream]);
 
   const toggleVideo = () => {
@@ -267,6 +381,12 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       const newState = !videoEnabled;
       videoTrack.enabled = newState;
       setVideoEnabled(newState);
+      
+      // Update local video state
+      setVideoStates(prev => ({
+        ...prev,
+        [user._id]: newState
+      }));
       
       // Notify other participants
       socketRef.current.emit('meeting-video-toggle', {
@@ -280,8 +400,8 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
     }
   };
 
-  function createPeerConnection(peerId) {
-    console.log('Creating peer connection for:', peerId);
+  function createPeerConnection(peerId, peerRole = null) {
+    console.log('Creating peer connection for:', peerId, 'Role:', peerRole);
     
     const pc = new RTCPeerConnection({ 
       iceServers: [
@@ -294,18 +414,35 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       iceCandidatePoolSize: 10
     });
 
-    // Add local tracks to connection
-    localStream.getTracks().forEach(track => {
-      console.log('Adding track to peer connection:', track.kind);
-      pc.addTrack(track, localStream);
-    });
+    // Add local tracks to connection only if localStream exists
+    if (localStream) {
+      localStream.getTracks().forEach(track => {
+        console.log('Adding track to peer connection:', track.kind);
+        pc.addTrack(track, localStream);
+      });
+    } else {
+      console.log('No local stream available, skipping track addition');
+    }
+
+    // Handle connection state changes for debugging
+    pc.onconnectionstatechange = () => {
+      console.log(`Connection state with ${peerId}: ${pc.connectionState}`);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state with ${peerId}: ${pc.iceConnectionState}`);
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log(`Signaling state with ${peerId}: ${pc.signalingState}`);
+    };
 
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         console.log('New ICE candidate');
         socketRef.current.emit('webrtc-ice-candidate', { 
-          classId, 
+          to: peerId,
           candidate: event.candidate, 
           from: user._id,
           role: user.role
@@ -323,12 +460,11 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       console.log('ICE connection state:', pc.iceConnectionState);
     };
 
-    // Handle incoming tracks
+    // Handle incoming tracks - CRITICAL FIX
     pc.ontrack = (event) => {
       console.log('Received remote track:', event.track.kind, 'from peer:', peerId);
       const stream = event.streams[0];
       
-      // Ensure we have a valid stream
       if (!stream) {
         console.error('No stream received with track');
         return;
@@ -336,129 +472,223 @@ const ClassroomVideo = ({ classId, largeGrid, videoEnabled = true }) => {
       
       console.log('Stream ID:', stream.id);
       console.log('Track:', event.track.kind, event.track.id);
+      console.log(`Stream has ${stream.getVideoTracks().length} video tracks and ${stream.getAudioTracks().length} audio tracks`);
+      console.log('Adding peer to state:', peerId, 'with role:', peerRole);
       
-      setPeers(prev => ({ ...prev, [peerId]: { stream } }));
-      
-      // If this is student, check if the stream is from teacher
-      if (user.role === 'student') {
-        console.log('Student checking if stream is from teacher');
-        
-        // Clean up previous listener
-        socketRef.current.off('peer-role');
-        
-        // Set up new listener
-        socketRef.current.on('peer-role', ({ id, role }) => {
-          console.log('Received peer role:', id, role);
-          if (id === peerId && role === 'teacher') {
-            console.log('Confirmed teacher stream, setting...');
-            setTeacherStream(stream);
-          }
-        });
-        
-        // Request peer role
-        socketRef.current.emit('get-peer-role', { peerId });
+      // Ensure the stream has active tracks
+      if (stream.getTracks().length === 0) {
+        console.warn('Received stream with no tracks from peer:', peerId);
+        return;
       }
+      
+      if (stream.getVideoTracks().length === 0) {
+        console.warn(`No video tracks in stream from ${peerId}`);
+      }
+      
+      setPeers(prevPeers => ({
+        ...prevPeers,
+        [peerId]: { 
+          stream: stream,
+          role: peerRole,
+          pc: pc
+        }
+      }));
     };
 
     return pc;
   }
 
+  // Get initials for avatar display
+  const getInitials = (name) => {
+    if (!name) return '?';
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Get color based on name for consistent avatar colors
+  const getAvatarColor = (name) => {
+    const colors = [
+      'bg-gradient-to-br from-red-500 to-red-600', 
+      'bg-gradient-to-br from-blue-500 to-blue-600', 
+      'bg-gradient-to-br from-green-500 to-green-600', 
+      'bg-gradient-to-br from-yellow-500 to-yellow-600', 
+      'bg-gradient-to-br from-purple-500 to-purple-600', 
+      'bg-gradient-to-br from-pink-500 to-pink-600', 
+      'bg-gradient-to-br from-indigo-500 to-indigo-600', 
+      'bg-gradient-to-br from-teal-500 to-teal-600'
+    ];
+    
+    if (!name) return colors[0];
+    
+    const hash = name.split('').reduce((acc, char) => char.charCodeAt(0) + ((acc << 5) - acc), 0);
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  // Get participant info by userId
+  const getParticipantInfo = (userId) => {
+    return participants.find(p => p._id === userId) || { name: 'Unknown', role: 'student' };
+  };
+
+  // Calculate grid layout based on number of participants - GOOGLE MEET STYLE
+  const getGridLayout = (participantCount) => {
+    if (participantCount <= 1) return 'grid-cols-1';
+    if (participantCount === 2) return 'grid-cols-2';
+    if (participantCount <= 4) return 'grid-cols-2';
+    if (participantCount <= 6) return 'grid-cols-3';
+    if (participantCount <= 9) return 'grid-cols-3';
+    return 'grid-cols-4';
+  };
+
+  // Get teacher-first participant order (like Google Meet)
+  const getOrderedParticipants = () => {
+    const allParticipants = getAllVideoParticipants();
+    
+    // Sort: teacher first, then others
+    return allParticipants.sort((a, b) => {
+      if (a.role === 'teacher' && b.role !== 'teacher') return -1;
+      if (a.role !== 'teacher' && b.role === 'teacher') return 1;
+      return 0;
+    });
+  };
+
+  // Get participants for student view - prioritize teacher
+  const getStudentViewParticipants = () => {
+    const allParticipants = getAllVideoParticipants();
+    const teacher = allParticipants.find(p => p.role === 'teacher');
+    const others = allParticipants.filter(p => p.role !== 'teacher');
+    
+    // Return teacher first, then others (limit others to 3 for better focus)
+    return teacher ? [teacher, ...others.slice(0, 3)] : others.slice(0, 4);
+  };
+
+  // Always show all participants in the meeting (avatars/videos), fallback to local user if participants is empty
+  const getAllVideoParticipants = () => {
+    if (participants && participants.length > 0) {
+      return participants.map(participant => {
+        // For the local user, always use the localStream if available
+        const isLocal = user && participant._id === user._id;
+        return {
+          userId: participant._id,
+          stream: isLocal ? localStream : (peers[participant._id]?.stream || null),
+          isLocal,
+          name: participant.name,
+          role: participant.role
+        };
+      });
+    } else if (user) {
+      // Fallback: show at least the local user
+      return [{
+        userId: user._id,
+        stream: localStream,
+        isLocal: true,
+        name: user.name,
+        role: user.role
+      }];
+    }
+    return [];
+  };
+
   return (
-    <div className="mb-4 w-full h-full flex flex-wrap gap-6 items-center justify-center relative">
-      {/* Video Controls */}
-      {/* <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-20 flex gap-4 bg-gray-800 p-3 rounded-lg">
-        <button
-          onClick={toggleVideo}
-          className={`p-2 rounded-full ${
-            videoEnabled ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'
-          }`}
-          title={videoEnabled ? 'Turn off video' : 'Turn on video'}
-        >
-          {videoEnabled ? (
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2zM3 3l18 18" />
-            </svg>
-          )}
-        </button>
-      </div> */}
-      {user.role === 'student' ? (
-        // For students
-        <div className="flex flex-col items-center">
-          <div className="text-sm font-medium text-gray-700 mb-2">
-            {teacherStream ? 'Teacher' : 'Connecting to teacher...'}
-          </div>
-          {teacherStream ? (
-            <video
-              autoPlay
-              playsInline
-              ref={video => {
-                if (video && teacherStream) {
-                  console.log('Setting teacher stream to video element');
-                  video.srcObject = teacherStream;
-                }
-              }}
-              className="w-[640px] h-[480px] bg-black rounded-2xl shadow-lg"
-            />
-          ) : (
-            <div className="w-[640px] h-[480px] bg-black rounded-2xl shadow-lg flex items-center justify-center text-white">
-              Waiting for teacher's video...
+    <div className="w-full h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      
+      {/* Video Grid - Modern Enhanced Style */}
+      <div
+        className={`w-full h-full grid ${getGridLayout(getAllVideoParticipants().length)} auto-rows-fr gap-3 p-4`}
+        style={{ minHeight: '400px' }}
+      >
+        {getOrderedParticipants().map((participant, idx) => {
+          const isVideoOn = videoStates[participant.userId] !== false;
+          const isTeacher = participant.role === 'teacher';
+          const isLocalUser = participant.userId === user._id;
+
+          return (
+            <div
+              key={`${participant.userId}-${participant.stream?.id || 'no-stream'}`}
+              className={`relative flex flex-col items-stretch bg-slate-800/90 backdrop-blur-sm rounded-xl overflow-hidden shadow-2xl transition-all duration-300 hover:shadow-blue-500/20 hover:scale-[1.02] border
+                ${isTeacher ? 'border-blue-500/60 ring-2 ring-blue-400/30 shadow-blue-500/30' : 'border-slate-600/40'}
+                ${isTeacher && idx === 0 ? 'order-first' : ''}
+              `}
+              style={{ minHeight: '220px', minWidth: '220px' }}
+            >
+              {/* Video Stream or Avatar */}
+              {(participant.stream && isVideoOn) ? (
+                <video
+                  autoPlay
+                  playsInline
+                  muted={isLocalUser}
+                  ref={video => {
+                    if (video && participant.stream) {
+                      if (video.srcObject !== participant.stream) {
+                        video.srcObject = participant.stream;
+                        console.log(`Attached stream to video for ${participant.name}:`, participant.stream.id);
+                      }
+                    }
+                  }}
+                  onLoadedMetadata={() => console.log(`Video metadata loaded for ${participant.name}`)}
+                  className="w-full h-full object-cover"
+                  style={{ background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)' }}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900">
+                  <div className={`w-28 h-28 text-4xl rounded-full ${getAvatarColor(participant.name)} flex items-center justify-center text-white font-bold shadow-2xl border-4 border-white/20 backdrop-blur-sm`}>
+                    {getInitials(participant.name)}
+                  </div>
+                  {!participant.stream && (
+                    <div className="absolute top-3 left-3 bg-amber-500/90 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>
+                      Connecting...
+                    </div>
+                  )}
+                  {!isVideoOn && participant.stream && (
+                    <div className="absolute top-3 left-3 bg-red-500/90 backdrop-blur-sm text-white text-xs font-medium px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd" />
+                      </svg>
+                      Video Off
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Participant Info Bar - Enhanced */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 flex items-center justify-between backdrop-blur-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-white text-sm font-semibold drop-shadow-lg tracking-wide">
+                    {participant.name}
+                  </span>
+                  {isTeacher && (
+                    <span className="bg-gradient-to-r from-blue-600 to-blue-500 text-white text-xs font-medium px-2.5 py-1 rounded-full shadow-lg">
+                      Teacher
+                    </span>
+                  )}
+                  {isLocalUser && (
+                    <span className="bg-gradient-to-r from-slate-600 to-slate-500 text-white text-xs font-medium px-2.5 py-1 rounded-full shadow-lg">
+                      You
+                    </span>
+                  )}
+                </div>
+                {/* Video Status Indicator */}
+                <div className="flex items-center gap-1.5">
+                  {!isVideoOn && (
+                    <div className="p-1.5 bg-red-500/80 backdrop-blur-sm rounded-full">
+                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd" />
+                        <path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
-          
-          {/* Show student's own video in smaller size */}
-          <div className="absolute top-4 right-4">
-            <div className="text-sm font-medium text-gray-700 mb-2">You</div>
-            <video
-              autoPlay
-              muted
-              playsInline
-              ref={video => {
-                if (video && localStream) video.srcObject = localStream;
-              }}
-              className="w-48 h-36 bg-black rounded"
-            />
-          </div>
-        </div>
-      ) : (
-        // For teacher
-        <div className="flex flex-col items-center">
-          <div className="text-sm font-medium text-gray-700 mb-2">You (Teacher)</div>
-          <video
-            autoPlay
-            muted
-            playsInline
-            ref={video => {
-              if (video && localStream) {
-                console.log('Setting teacher local stream to video element');
-                video.srcObject = localStream;
-              }
-            }}
-            className="w-[640px] h-[480px] bg-black rounded-2xl shadow-lg"
-          />
-        </div>
-      )}
-      {/* Show other participants in smaller windows */}
-      {Object.entries(peers).map(([peerId, { stream }]) => (
-        (user.role === 'student' && teacherStream && stream === teacherStream) ? null : (
-          <div key={peerId} className="flex flex-col items-center">
-            <div className="text-sm font-medium text-gray-700 mb-2">Participant</div>
-            <video
-              autoPlay
-              playsInline
-              ref={video => {
-                if (video && stream) video.srcObject = stream;
-              }}
-              className="w-[160px] h-[120px] bg-black rounded-xl shadow-lg"
-            />
-          </div>
-        )
-      ))}
+          );
+        })}
+      </div>
     </div>
   );
 };
 
-export default ClassroomVideo; 
+export default ClassroomVideo;
