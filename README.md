@@ -7,18 +7,17 @@ A full-stack web platform for virtual classrooms, featuring real-time video, cha
 - **Backend:** Node.js, Express.js
 - **Database:** MongoDB (Mongoose)
 - **Real-Time:** Socket.IO
-- **Video Conferencing:** WebRTC/Agora.js
-- **Whiteboard:** Fabric.js
+- **Video Conferencing:** WebRTC
 - **File Uploads:** Multer, Cloudinary
-- **Auth:** JWT, Google OAuth2
+- **Auth:** JWT
 
 ## Features
-- Authentication (JWT, Google OAuth, OTP reset, roles)
+- Authentication (JWT, OTP reset, roles)
 - Student/Teacher/Admin dashboards
-- Real-time classroom (video, chat, whiteboard)
+- Real-time classroom (video, chat)
 - Assignments (upload, submit, grade)
 - Notes sharing
-- Schedule & calendar
+- Schedule
 - Notifications (real-time, email)
 
 ## Setup
